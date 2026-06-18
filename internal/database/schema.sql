@@ -129,6 +129,7 @@ CREATE TABLE students (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
     institution VARCHAR(255),
     cohort_year INT,
     created_at TIMESTAMPTZ DEFAULT now()
@@ -214,14 +215,14 @@ CREATE TABLE sct_scores (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- DTI (Diagnostic Thinking Inventory) PRE/POST TEST
+-- DTI PRE/POST TEST
 
 CREATE TABLE dti_responses (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     student_id UUID REFERENCES students(id) ON DELETE CASCADE,
     test_phase VARCHAR(10) CHECK (test_phase IN ('pre', 'post')),
 
-    -- 41 item DTI, disimpan sebagai JSONB {"item_1": 4, "item_2": 5, ...}
+    -- 41 item DTI, disimpan JSONB 
     item_responses JSONB NOT NULL,
 
     flexibility_in_thinking_score FLOAT, -- hasil kalkulasi subscale FT
