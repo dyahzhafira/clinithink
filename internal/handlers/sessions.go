@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"clinithink/internal/bias"
 	"clinithink/internal/response"
 
 	"github.com/gofiber/fiber/v2"
@@ -167,22 +168,70 @@ func (h *Handler) SubmitReasoning(c *fiber.Ctx) error {
 	})
 }
 
-// BiasCheck — Sprint 1 Task #10
 func (h *Handler) BiasCheck(c *fiber.Ctx) error {
-	return response.NotImplemented(c)
+	studentID, ok := c.Locals("user_id").(string)
+	if !ok || studentID == "" {
+		return response.Error(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Token tidak valid")
+	}
+
+	sessionID := c.Params("id")
+
+	var exists bool
+	h.db.QueryRow(c.Context(),
+		`SELECT EXISTS(SELECT 1 FROM sessions WHERE id = $1 AND student_id = $2)`,
+		sessionID, studentID,
+	).Scan(&exists)
+	if !exists {
+		return response.Error(c, fiber.StatusNotFound, "NOT_FOUND", "Sesi tidak ditemukan")
+	}
+
+	rows, err := h.db.Query(c.Context(),
+		`SELECT event_type, sequence_number FROM session_events
+		 WHERE session_id = $1 ORDER BY sequence_number`, sessionID)
+	if err != nil {
+		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
+	}
+	defer rows.Close()
+
+	var events []bias.Event
+	for rows.Next() {
+		var e bias.Event
+		if err := rows.Scan(&e.EventType, &e.SequenceNumber); err != nil {
+			return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
+		}
+		events = append(events, e)
+	}
+
+	results := bias.Detect(events)
+	for _, r := range results {
+		h.db.Exec(c.Context(), `
+			INSERT INTO bias_detections (session_id, bias_type, detected_at_sequence, confidence_note)
+			VALUES ($1, $2, $3, $4)`,
+			sessionID, r.BiasType, r.DetectedAtSequence, r.ConfidenceNote)
+	}
+
+	if results == nil {
+		results = []bias.DetectionResult{}
+	}
+
+	return response.OK(c, fiber.Map{
+		"session_id":  sessionID,
+		"event_count": len(events),
+		"detections":  results,
+	})
 }
 
-// SubmitAnalysis — skeleton 501 permanen, full implementation Sprint 3
+// SubmitAnalysis
 func (h *Handler) SubmitAnalysis(c *fiber.Ctx) error {
 	return response.NotImplemented(c)
 }
 
-// GetAnalysis — skeleton 501 permanen, full implementation Sprint 3
+// GetAnalysis
 func (h *Handler) GetAnalysis(c *fiber.Ctx) error {
 	return response.NotImplemented(c)
 }
 
-// SubmitExpertResponse — skeleton 501 permanen, full implementation Sprint 4
+// SubmitExpertResponse
 func (h *Handler) SubmitExpertResponse(c *fiber.Ctx) error {
 	return response.NotImplemented(c)
 }
