@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"clinithink/internal/config"
+	"clinithink/internal/database"
 	"clinithink/internal/routes"
 
 	"github.com/gofiber/fiber/v2"
@@ -20,7 +21,19 @@ func main() {
 		ErrorHandler: errorHandler,
 	})
 
-	routes.Setup(app, cfg)
+	db, err := database.NewPostgres(cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("database error: %v", err)
+	}
+	defer db.Close()
+
+	rdb, err := database.NewRedis(cfg.RedisURL)
+	if err != nil {
+		log.Fatalf("redis error: %v", err)
+	}
+	defer rdb.Close()
+
+	routes.Setup(app, cfg, db, rdb)
 
 	log.Printf("server starting on :%s", cfg.Port)
 	if err := app.Listen(":" + cfg.Port); err != nil {

@@ -1,11 +1,18 @@
 package handlers
 
-import "clinithink/internal/config"
+import (
+	"clinithink/internal/config"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
+)
 
 type Handler struct {
-	cfg *config.Config
+	cfg   *config.Config
+	db    *pgxpool.Pool
+	redis *redis.Client
 }
 
-func New(cfg *config.Config) *Handler {
-	return &Handler{cfg: cfg}
+func New(cfg *config.Config, db *pgxpool.Pool, redis *redis.Client) *Handler {
+	return &Handler{cfg: cfg, db: db, redis: redis}
 }

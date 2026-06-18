@@ -6,10 +6,12 @@ import (
 	"clinithink/internal/middleware"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
-func Setup(app *fiber.App, cfg *config.Config) {
-	h := handlers.New(cfg)
+func Setup(app *fiber.App, cfg *config.Config, db *pgxpool.Pool, rdb *redis.Client) {
+	h := handlers.New(cfg, db, rdb)
 	authMW := middleware.JWT(cfg.JWTSecret)
 
 	api := app.Group("/api")
