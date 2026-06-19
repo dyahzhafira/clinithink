@@ -23,7 +23,26 @@ func Setup(app *fiber.App, cfg *config.Config, db *pgxpool.Pool, rdb *redis.Clie
 	api := app.Group("/api")
 
 	api.Get("/health", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{"success": true, "data": fiber.Map{"status": "ok"}})
+		dbStatus := "ok"
+		if db.Ping(c.Context()) != nil {
+			dbStatus = "error"
+		}
+		redisStatus := "ok"
+		if rdb.Ping(c.Context()).Err() != nil {
+			redisStatus = "error"
+		}
+		overall := "ok"
+		if dbStatus != "ok" || redisStatus != "ok" {
+			overall = "degraded"
+		}
+		return c.JSON(fiber.Map{
+			"success": true,
+			"data": fiber.Map{
+				"status":   overall,
+				"database": dbStatus,
+				"redis":    redisStatus,
+			},
+		})
 	})
 
 	authMiddlewares := []fiber.Handler{}
@@ -64,9 +83,12 @@ func Setup(app *fiber.App, cfg *config.Config, db *pgxpool.Pool, rdb *redis.Clie
 	p.Get("/students/me", h.GetMe)
 	p.Get("/students/me/summary", h.GetSummary)
 
+	p.Post("/dti", h.SubmitDTI)
+	p.Get("/dti", h.GetDTI)
+
 	p.Post("/tts/synthesize", h.SynthesizeSpeech)
 
-	// WebSocket — auth via ?token= query param (separate from JWT middleware group)
+	// WebSocket
 	app.Use("/ws/sessions", h.WebSocketAuth)
 	app.Get("/ws/sessions/:id", gws.New(h.HandleSession))
 }

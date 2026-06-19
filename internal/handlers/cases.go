@@ -190,9 +190,9 @@ func (h *Handler) GetCase(c *fiber.Ctx) error {
 		"expected_workup":     workup,
 	}
 
-	// SCT items
+	// expert panel modal response excluded
 	sctRows, err := h.db.Query(c.Context(), `
-		SELECT id, item_id, scenario_addition, hypothesis_tested, expert_panel_modal_response, rationale
+		SELECT id, item_id, scenario_addition, hypothesis_tested, rationale
 		FROM sct_items WHERE case_id = $1 ORDER BY item_id`, detail.ID)
 	if err != nil {
 		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
@@ -201,17 +201,16 @@ func (h *Handler) GetCase(c *fiber.Ctx) error {
 
 	detail.SCTItems = []fiber.Map{}
 	for sctRows.Next() {
-		var id, itemID, scenario, hypothesis, modalResponse, rationale string
-		if err := sctRows.Scan(&id, &itemID, &scenario, &hypothesis, &modalResponse, &rationale); err != nil {
+		var id, itemID, scenario, hypothesis, rationale string
+		if err := sctRows.Scan(&id, &itemID, &scenario, &hypothesis, &rationale); err != nil {
 			return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
 		}
 		detail.SCTItems = append(detail.SCTItems, fiber.Map{
-			"id":                          id,
-			"item_id":                     itemID,
-			"scenario_addition":           scenario,
-			"hypothesis_tested":           hypothesis,
-			"expert_panel_modal_response": modalResponse,
-			"rationale":                   rationale,
+			"id":                id,
+			"item_id":           itemID,
+			"scenario_addition": scenario,
+			"hypothesis_tested": hypothesis,
+			"rationale":         rationale,
 		})
 	}
 

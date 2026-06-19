@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -475,6 +476,62 @@ func TestSCTFlow(t *testing.T) {
 	getData, _ := getBody["data"].(map[string]interface{})
 	if getData["total_items"] == nil {
 		t.Error("expected total_items in SCT scores response")
+	}
+}
+
+func TestDTIFlow(t *testing.T) {
+	requireDB(t)
+	token := getTestToken(t)
+
+	responses := make(map[string]interface{}, 41)
+	for i := 1; i <= 41; i++ {
+		responses[fmt.Sprintf("%d", i)] = 3
+	}
+
+	//submit pretest
+	resp := doRequest(t, "POST", "/api/dti", map[string]interface{}{
+		"test_phase": "pre",
+		"responses":  responses,
+	}, token)
+	if resp.StatusCode != 200 {
+		t.Fatalf("submit DTI pre: expected 200, got %d", resp.StatusCode)
+	}
+	body := parseBody(t, resp)
+	data, _ := body["data"].(map[string]interface{})
+	if data["flexibility_in_thinking_score"] == nil {
+		t.Error("expected flexibility_in_thinking_score in response")
+	}
+	if data["structure_of_knowledge_score"] == nil {
+		t.Error("expected structure_of_knowledge_score in response")
+	}
+
+	//duplicate pretest must be rejected
+	resp = doRequest(t, "POST", "/api/dti", map[string]interface{}{
+		"test_phase": "pre",
+		"responses":  responses,
+	}, token)
+	if resp.StatusCode != 409 {
+		t.Errorf("duplicate DTI pre: expected 409, got %d", resp.StatusCode)
+	}
+
+	//submit posttest
+	resp = doRequest(t, "POST", "/api/dti", map[string]interface{}{
+		"test_phase": "post",
+		"responses":  responses,
+	}, token)
+	if resp.StatusCode != 200 {
+		t.Fatalf("submit DTI post: expected 200, got %d", resp.StatusCode)
+	}
+
+	//get results, return both pre and post
+	resp = doRequest(t, "GET", "/api/dti", nil, token)
+	if resp.StatusCode != 200 {
+		t.Errorf("get DTI: expected 200, got %d", resp.StatusCode)
+	}
+	getBody := parseBody(t, resp)
+	results, _ := getBody["data"].([]interface{})
+	if len(results) != 2 {
+		t.Errorf("expected 2 DTI results (pre+post), got %d", len(results))
 	}
 }
 
