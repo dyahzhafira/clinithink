@@ -15,6 +15,7 @@ type Config struct {
 	RedisURL    string
 	JWTSecret   string
 	JWTExpiry   string
+	GCPTTSKey   string
 }
 
 func Load() (*Config, error) {
@@ -36,6 +37,8 @@ func Load() (*Config, error) {
 	if cfg.JWTSecret = os.Getenv("JWT_SECRET"); cfg.JWTSecret == "" {
 		missing = append(missing, "JWT_SECRET")
 	}
+
+	cfg.GCPTTSKey = os.Getenv("GCP_TTS_API_KEY")
 
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("missing required env vars: %s", strings.Join(missing, ", "))

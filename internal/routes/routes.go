@@ -64,6 +64,8 @@ func Setup(app *fiber.App, cfg *config.Config, db *pgxpool.Pool, rdb *redis.Clie
 	p.Get("/students/me", h.GetMe)
 	p.Get("/students/me/summary", h.GetSummary)
 
+	p.Post("/tts/synthesize", h.SynthesizeSpeech)
+
 	// WebSocket — auth via ?token= query param (separate from JWT middleware group)
 	app.Use("/ws/sessions", h.WebSocketAuth)
 	app.Get("/ws/sessions/:id", gws.New(h.HandleSession))

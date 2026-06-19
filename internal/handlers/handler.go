@@ -11,14 +11,15 @@ import (
 )
 
 type Handler struct {
-	cfg   *config.Config
-	db    *pgxpool.Pool
-	redis *redis.Client
-	hub   *ws.Hub
+	cfg    *config.Config
+	db     *pgxpool.Pool
+	redis  *redis.Client
+	hub    *ws.Hub
+	ttsKey string
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, redis *redis.Client, hub *ws.Hub) *Handler {
-	return &Handler{cfg: cfg, db: db, redis: redis, hub: hub}
+	return &Handler{cfg: cfg, db: db, redis: redis, hub: hub, ttsKey: cfg.GCPTTSKey}
 }
 
 func parseJSON(raw []byte, dest interface{}) error {
