@@ -53,6 +53,8 @@ func Setup(app *fiber.App, cfg *config.Config, db *pgxpool.Pool, rdb *redis.Clie
 	p.Post("/sessions/:id/submit", h.SubmitReasoning)
 	p.Get("/sessions/:id/bias-check", h.BiasCheck)
 	p.Post("/sessions/:id/events", h.LogEvent)
+	p.Post("/sessions/:id/sct", h.SubmitSCT)
+	p.Get("/sessions/:id/sct", h.GetSCTScores)
 	p.Post("/sessions/:id/analysis", h.SubmitAnalysis)
 	p.Get("/sessions/:id/analysis", h.GetAnalysis)
 	p.Post("/sct-items/:id/expert-response", h.SubmitExpertResponse)
