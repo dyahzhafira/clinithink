@@ -13,6 +13,7 @@ import (
 	"clinithink/internal/config"
 	"clinithink/internal/database"
 	"clinithink/internal/routes"
+	ws "clinithink/internal/ws"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/joho/godotenv"
@@ -50,7 +51,8 @@ func TestMain(m *testing.M) {
 			})
 		},
 	})
-	routes.Setup(testApp, cfg, db, rdb)
+	hub := ws.NewHub()
+	routes.Setup(testApp, cfg, db, rdb, hub)
 
 	code := m.Run()
 

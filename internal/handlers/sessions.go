@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
+	"time"
 
 	"clinithink/internal/bias"
 	"clinithink/internal/response"
+	ws "clinithink/internal/ws"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -153,15 +155,27 @@ func (h *Handler) SubmitReasoning(c *fiber.Ctx) error {
 	}
 
 	var status string
-	err := h.db.QueryRow(c.Context(),
-		`SELECT status FROM sessions WHERE id = $1 AND student_id = $2`,
+	var startedAt time.Time
+	var durationMin int
+	err := h.db.QueryRow(c.Context(), `
+		SELECT s.status, s.started_at, c.station_duration_minutes
+		FROM sessions s JOIN cases c ON c.id = s.case_id
+		WHERE s.id = $1 AND s.student_id = $2`,
 		sessionID, studentID,
-	).Scan(&status)
+	).Scan(&status, &startedAt, &durationMin)
 	if err != nil {
 		return response.Error(c, fiber.StatusNotFound, "NOT_FOUND", "Sesi tidak ditemukan")
 	}
 	if status != "in_progress" {
 		return response.Error(c, fiber.StatusConflict, "SESSION_CLOSED", "Sesi sudah disubmit atau ditutup")
+	}
+	if time.Since(startedAt) > time.Duration(durationMin)*time.Minute {
+		h.db.Exec(c.Context(),
+			`UPDATE sessions SET status = 'abandoned', submitted_at = now() WHERE id = $1 AND status = 'in_progress'`,
+			sessionID,
+		)
+		h.hub.StopTimer(sessionID)
+		return response.Error(c, fiber.StatusConflict, "SESSION_EXPIRED", "Waktu sesi sudah habis")
 	}
 
 	var submissionID string
@@ -180,6 +194,12 @@ func (h *Handler) SubmitReasoning(c *fiber.Ctx) error {
 	if err != nil {
 		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
 	}
+
+	h.hub.StopTimer(sessionID)
+	h.hub.Send(sessionID, ws.Event{
+		Type:    "session_ended",
+		Payload: map[string]string{"reason": "submitted"},
+	})
 
 	return response.OK(c, fiber.Map{
 		"submission_id": submissionID,

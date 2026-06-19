@@ -7,6 +7,7 @@ import (
 	"clinithink/internal/config"
 	"clinithink/internal/database"
 	"clinithink/internal/routes"
+	ws "clinithink/internal/ws"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -33,7 +34,8 @@ func main() {
 	}
 	defer rdb.Close()
 
-	routes.Setup(app, cfg, db, rdb)
+	hub := ws.NewHub()
+	routes.Setup(app, cfg, db, rdb, hub)
 
 	log.Printf("server starting on :%s", cfg.Port)
 	if err := app.Listen(":" + cfg.Port); err != nil {
