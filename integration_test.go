@@ -542,7 +542,6 @@ func TestSkeletonEndpoints_Return501(t *testing.T) {
 	endpoints := []struct{ method, path string }{
 		{"POST", "/api/sessions/00000000-0000-0000-0000-000000000000/analysis"},
 		{"GET", "/api/sessions/00000000-0000-0000-0000-000000000000/analysis"},
-		{"POST", "/api/sct-items/00000000-0000-0000-0000-000000000000/expert-response"},
 	}
 	for _, e := range endpoints {
 		resp := doRequest(t, e.method, e.path, nil, token)
