@@ -33,7 +33,7 @@ func (h *Handler) SubmitSCT(c *fiber.Ctx) error {
 		}
 	}
 
-	// Validasi session milik student, ambil case_id
+	// validate session from student, get case id
 	var status, caseID string
 	if err := h.db.QueryRow(c.Context(),
 		`SELECT status, case_id FROM sessions WHERE id = $1 AND student_id = $2`,
@@ -45,7 +45,7 @@ func (h *Handler) SubmitSCT(c *fiber.Ctx) error {
 		return response.Error(c, fiber.StatusConflict, "SESSION_CLOSED", "Sesi sudah ditutup")
 	}
 
-	// Ambil submission_id terbaru untuk session ini
+	//get newest submission_id this session
 	var submissionID string
 	if err := h.db.QueryRow(c.Context(),
 		`SELECT id FROM reasoning_submissions WHERE session_id = $1 ORDER BY submitted_at DESC LIMIT 1`,
@@ -54,7 +54,7 @@ func (h *Handler) SubmitSCT(c *fiber.Ctx) error {
 		return response.Error(c, fiber.StatusConflict, "NO_SUBMISSION", "Submit reasoning terlebih dahulu sebelum mengisi SCT")
 	}
 
-	// Cek apakah SCT sudah pernah disubmit untuk submission ini
+	// check submitted sct
 	var alreadyScored bool
 	h.db.QueryRow(c.Context(),
 		`SELECT EXISTS(SELECT 1 FROM sct_scores WHERE submission_id = $1)`,
@@ -75,7 +75,7 @@ func (h *Handler) SubmitSCT(c *fiber.Ctx) error {
 	results := []itemResult{}
 
 	for _, answer := range body.Answers {
-		// Validasi item milik case yang sama
+		// validate item with the same case
 		var modalResponse string
 		if err := h.db.QueryRow(c.Context(),
 			`SELECT expert_panel_modal_response FROM sct_items WHERE id = $1 AND case_id = $2`,
@@ -174,8 +174,79 @@ func (h *Handler) GetSCTScores(c *fiber.Ctx) error {
 	})
 }
 
-// scoreSCT calculates partial credit based on distance from expert modal response.
-// Scale: -2 to +2. Distance 0 = 1.0, each step reduces by 0.25, minimum 0.
+func (h *Handler) SubmitExpertResponse(c *fiber.Ctx) error {
+	expertID, ok := c.Locals("user_id").(string)
+	if !ok || expertID == "" {
+		return response.Error(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Token tidak valid")
+	}
+
+	sctItemID := c.Params("id")
+
+	var body struct {
+		Response  string `json:"response"`
+		Rationale string `json:"rationale"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return response.Error(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Body tidak valid")
+	}
+
+	validResponses := map[string]bool{"-2": true, "-1": true, "0": true, "+1": true, "+2": true}
+	if !validResponses[body.Response] {
+		return response.Error(c, fiber.StatusBadRequest, "VALIDATION_ERROR",
+			"response harus salah satu dari: -2, -1, 0, +1, +2")
+	}
+
+	// Verify item exists
+	var exists bool
+	h.db.QueryRow(c.Context(),
+		`SELECT EXISTS(SELECT 1 FROM sct_items WHERE id = $1)`, sctItemID,
+	).Scan(&exists)
+	if !exists {
+		return response.Error(c, fiber.StatusNotFound, "NOT_FOUND", "SCT item tidak ditemukan")
+	}
+
+	// upsert, remove previous response from this expert, then insert
+	h.db.Exec(c.Context(),
+		`DELETE FROM sct_expert_responses WHERE sct_item_id = $1 AND expert_id = $2`,
+		sctItemID, expertID,
+	)
+	if _, err := h.db.Exec(c.Context(),
+		`INSERT INTO sct_expert_responses (sct_item_id, expert_id, response) VALUES ($1, $2, $3)`,
+		sctItemID, expertID, body.Response,
+	); err != nil {
+		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
+	}
+
+	// Recalculate modal (most frequent tie-break by lexicographic order for determinism)
+	var modalResponse string
+	h.db.QueryRow(c.Context(), `
+		SELECT response FROM sct_expert_responses
+		WHERE sct_item_id = $1
+		GROUP BY response
+		ORDER BY COUNT(*) DESC, response ASC
+		LIMIT 1`, sctItemID,
+	).Scan(&modalResponse)
+
+	h.db.Exec(c.Context(),
+		`UPDATE sct_items SET expert_panel_modal_response = $1 WHERE id = $2`,
+		modalResponse, sctItemID,
+	)
+
+	if body.Rationale != "" {
+		h.db.Exec(c.Context(),
+			`UPDATE sct_items SET rationale = $1 WHERE id = $2`,
+			body.Rationale, sctItemID,
+		)
+	}
+
+	return response.OK(c, fiber.Map{
+		"sct_item_id":    sctItemID,
+		"response":       body.Response,
+		"modal_response": modalResponse,
+	})
+}
+
+//scale -2 to +2, distance 0 =1.0, each step reduces by 0.25, minimum 0
 func scoreSCT(studentResp, modalResp string) float64 {
 	toInt := func(s string) int {
 		if len(s) > 0 && s[0] == '+' {

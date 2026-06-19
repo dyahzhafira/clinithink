@@ -336,7 +336,3 @@ func (h *Handler) GetAnalysis(c *fiber.Ctx) error {
 	return response.NotImplemented(c)
 }
 
-// SubmitExpertResponse
-func (h *Handler) SubmitExpertResponse(c *fiber.Ctx) error {
-	return response.NotImplemented(c)
-}

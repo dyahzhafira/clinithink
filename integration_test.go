@@ -392,6 +392,92 @@ func TestGetSummary(t *testing.T) {
 	}
 }
 
+func TestSCTFlow(t *testing.T) {
+	requireDB(t)
+	token := getTestToken(t)
+
+	//get a case with SCT items
+	resp := doRequest(t, "GET", "/api/cases?system=RESP", nil, token)
+	body := parseBody(t, resp)
+	data, _ := body["data"].([]interface{})
+	if len(data) == 0 {
+		t.Fatal("no cases available")
+	}
+	firstCase, _ := data[0].(map[string]interface{})
+	caseUUID, _ := firstCase["id"].(string)
+
+	//get case detail to extract sct item UUIDs
+	resp = doRequest(t, "GET", "/api/cases/"+caseUUID, nil, token)
+	if resp.StatusCode != 200 {
+		t.Fatalf("get case detail: expected 200, got %d", resp.StatusCode)
+	}
+	caseBody := parseBody(t, resp)
+	caseData, _ := caseBody["data"].(map[string]interface{})
+	sctItems, _ := caseData["sct_items"].([]interface{})
+	if len(sctItems) == 0 {
+		t.Fatal("no SCT items in case")
+	}
+	firstItem, _ := sctItems[0].(map[string]interface{})
+	sctItemUUID, _ := firstItem["id"].(string)
+	if sctItemUUID == "" {
+		t.Fatal("sct_item id is empty")
+	}
+
+	//create session
+	resp = doRequest(t, "POST", "/api/sessions", map[string]interface{}{"case_id": caseUUID}, token)
+	if resp.StatusCode != 200 {
+		t.Fatalf("create session: expected 200, got %d", resp.StatusCode)
+	}
+	sessionBody := parseBody(t, resp)
+	sessionData, _ := sessionBody["data"].(map[string]interface{})
+	sessionID, _ := sessionData["id"].(string)
+
+	// submit reasoning first (required before SCT)
+	resp = doRequest(t, "POST", "/api/sessions/"+sessionID+"/submit", map[string]interface{}{
+		"raw_input": "Saya curiga TB paru berdasarkan gejala", "input_modality": "text",
+	}, token)
+	if resp.StatusCode != 200 {
+		t.Fatalf("submit reasoning: expected 200, got %d", resp.StatusCode)
+	}
+
+	//submit SCT answers
+	resp = doRequest(t, "POST", "/api/sessions/"+sessionID+"/sct", map[string]interface{}{
+		"answers": []interface{}{
+			map[string]interface{}{"sct_item_id": sctItemUUID, "response": "+1"},
+		},
+	}, token)
+	if resp.StatusCode != 200 {
+		t.Fatalf("submit SCT: expected 200, got %d", resp.StatusCode)
+	}
+	sctBody := parseBody(t, resp)
+	sctData, _ := sctBody["data"].(map[string]interface{})
+	normalizedScore, _ := sctData["normalized_score"].(float64)
+	if normalizedScore < 0 || normalizedScore > 1 {
+		t.Errorf("normalized_score out of range [0,1]: %v", normalizedScore)
+	}
+
+	// resubmit must be rejected
+	resp = doRequest(t, "POST", "/api/sessions/"+sessionID+"/sct", map[string]interface{}{
+		"answers": []interface{}{
+			map[string]interface{}{"sct_item_id": sctItemUUID, "response": "0"},
+		},
+	}, token)
+	if resp.StatusCode != 409 {
+		t.Errorf("duplicate SCT submit: expected 409, got %d", resp.StatusCode)
+	}
+
+	//get SCT scores
+	resp = doRequest(t, "GET", "/api/sessions/"+sessionID+"/sct", nil, token)
+	if resp.StatusCode != 200 {
+		t.Errorf("get SCT scores: expected 200, got %d", resp.StatusCode)
+	}
+	getBody := parseBody(t, resp)
+	getData, _ := getBody["data"].(map[string]interface{})
+	if getData["total_items"] == nil {
+		t.Error("expected total_items in SCT scores response")
+	}
+}
+
 //skeleton endpoints
 func TestSkeletonEndpoints_Return501(t *testing.T) {
 	requireDB(t)
