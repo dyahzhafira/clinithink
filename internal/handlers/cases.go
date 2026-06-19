@@ -12,9 +12,20 @@ func (h *Handler) ListCases(c *fiber.Ctx) error {
 	system := c.Query("system")
 	difficulty := c.Query("difficulty")
 
+	page := c.QueryInt("page", 1)
+	limit := c.QueryInt("limit", 20)
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+	offset := (page - 1) * limit
+
 	query := `
 		SELECT c.id, c.case_id, c.title, c.difficulty, c.station_duration_minutes,
-		       s.system_code, s.system_name
+		       s.system_code, s.system_name,
+		       COUNT(*) OVER() AS total_count
 		FROM cases c
 		JOIN systems s ON s.id = c.system_id
 		WHERE c.is_active = true`
@@ -33,7 +44,8 @@ func (h *Handler) ListCases(c *fiber.Ctx) error {
 		argIdx++
 	}
 
-	query += " ORDER BY s.system_code, c.case_id"
+	query += fmt.Sprintf(" ORDER BY s.system_code, c.case_id LIMIT $%d OFFSET $%d", argIdx, argIdx+1)
+	args = append(args, limit, offset)
 
 	rows, err := h.db.Query(c.Context(), query, args...)
 	if err != nil {
@@ -51,19 +63,25 @@ func (h *Handler) ListCases(c *fiber.Ctx) error {
 		SystemName             string `json:"system_name"`
 	}
 
+	var total int64
 	cases := []caseItem{}
 	for rows.Next() {
 		var item caseItem
 		if err := rows.Scan(
 			&item.ID, &item.CaseID, &item.Title, &item.Difficulty,
 			&item.StationDurationMinutes, &item.SystemCode, &item.SystemName,
+			&total,
 		); err != nil {
 			return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
 		}
 		cases = append(cases, item)
 	}
 
-	return response.OK(c, cases)
+	return c.JSON(fiber.Map{
+		"success": true,
+		"data":    cases,
+		"meta":    fiber.Map{"total": total, "page": page, "limit": limit},
+	})
 }
 
 func (h *Handler) GetCase(c *fiber.Ctx) error {

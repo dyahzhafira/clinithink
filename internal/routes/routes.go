@@ -24,17 +24,21 @@ func Setup(app *fiber.App, cfg *config.Config, db *pgxpool.Pool, rdb *redis.Clie
 		return c.JSON(fiber.Map{"success": true, "data": fiber.Map{"status": "ok"}})
 	})
 
-	auth := api.Group("/auth", limiter.New(limiter.Config{
-		Max:        10,
-		Expiration: 1 * time.Minute,
-		KeyGenerator: func(c *fiber.Ctx) string {
-			return c.IP()
-		},
-		LimitReached: func(c *fiber.Ctx) error {
-			return response.Error(c, fiber.StatusTooManyRequests, "RATE_LIMITED",
-				"Terlalu banyak percobaan, coba lagi dalam 1 menit")
-		},
-	}))
+	authMiddlewares := []fiber.Handler{}
+	if cfg.AppEnv != "test" {
+		authMiddlewares = append(authMiddlewares, limiter.New(limiter.Config{
+			Max:        10,
+			Expiration: 1 * time.Minute,
+			KeyGenerator: func(c *fiber.Ctx) string {
+				return c.IP()
+			},
+			LimitReached: func(c *fiber.Ctx) error {
+				return response.Error(c, fiber.StatusTooManyRequests, "RATE_LIMITED",
+					"Terlalu banyak percobaan, coba lagi dalam 1 menit")
+			},
+		}))
+	}
+	auth := api.Group("/auth", authMiddlewares...)
 	auth.Post("/register", h.Register)
 	auth.Post("/login", h.Login)
 
@@ -48,7 +52,11 @@ func Setup(app *fiber.App, cfg *config.Config, db *pgxpool.Pool, rdb *redis.Clie
 	p.Get("/sessions/:id", h.GetSession)
 	p.Post("/sessions/:id/submit", h.SubmitReasoning)
 	p.Get("/sessions/:id/bias-check", h.BiasCheck)
+	p.Post("/sessions/:id/events", h.LogEvent)
 	p.Post("/sessions/:id/analysis", h.SubmitAnalysis)
 	p.Get("/sessions/:id/analysis", h.GetAnalysis)
 	p.Post("/sct-items/:id/expert-response", h.SubmitExpertResponse)
+
+	p.Get("/students/me", h.GetMe)
+	p.Get("/students/me/summary", h.GetSummary)
 }

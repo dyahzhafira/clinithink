@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"encoding/json"
+
 	"clinithink/internal/bias"
 	"clinithink/internal/response"
 
@@ -39,13 +41,25 @@ func (h *Handler) ListSessions(c *fiber.Ctx) error {
 		return response.Error(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Token tidak valid")
 	}
 
+	page := c.QueryInt("page", 1)
+	limit := c.QueryInt("limit", 20)
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+	offset := (page - 1) * limit
+
 	rows, err := h.db.Query(c.Context(), `
-		SELECT s.id, s.status, s.started_at, s.submitted_at,
-		       c.case_id, c.title, c.difficulty
+		SELECT s.id, s.status, s.started_at::text, s.submitted_at::text,
+		       c.case_id, c.title, c.difficulty,
+		       COUNT(*) OVER() AS total_count
 		FROM sessions s
 		JOIN cases c ON c.id = s.case_id
 		WHERE s.student_id = $1
-		ORDER BY s.started_at DESC`, studentID)
+		ORDER BY s.started_at DESC
+		LIMIT $2 OFFSET $3`, studentID, limit, offset)
 	if err != nil {
 		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
 	}
@@ -61,19 +75,25 @@ func (h *Handler) ListSessions(c *fiber.Ctx) error {
 		Difficulty  string  `json:"difficulty"`
 	}
 
+	var total int64
 	sessions := []sessionItem{}
 	for rows.Next() {
 		var item sessionItem
 		if err := rows.Scan(
 			&item.ID, &item.Status, &item.StartedAt, &item.SubmittedAt,
 			&item.CaseID, &item.CaseTitle, &item.Difficulty,
+			&total,
 		); err != nil {
 			return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
 		}
 		sessions = append(sessions, item)
 	}
 
-	return response.OK(c, sessions)
+	return c.JSON(fiber.Map{
+		"success": true,
+		"data":    sessions,
+		"meta":    fiber.Map{"total": total, "page": page, "limit": limit},
+	})
 }
 
 func (h *Handler) GetSession(c *fiber.Ctx) error {
@@ -95,7 +115,7 @@ func (h *Handler) GetSession(c *fiber.Ctx) error {
 
 	var detail sessionDetail
 	err := h.db.QueryRow(c.Context(), `
-		SELECT s.id, s.status, s.started_at, s.submitted_at,
+		SELECT s.id, s.status, s.started_at::text, s.submitted_at::text,
 		       c.case_id, c.title
 		FROM sessions s
 		JOIN cases c ON c.id = s.case_id
@@ -218,6 +238,71 @@ func (h *Handler) BiasCheck(c *fiber.Ctx) error {
 		"session_id":  sessionID,
 		"event_count": len(events),
 		"detections":  results,
+	})
+}
+
+func (h *Handler) LogEvent(c *fiber.Ctx) error {
+	studentID, ok := c.Locals("user_id").(string)
+	if !ok || studentID == "" {
+		return response.Error(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Token tidak valid")
+	}
+
+	sessionID := c.Params("id")
+
+	var body struct {
+		EventType string          `json:"event_type"`
+		EventData json.RawMessage `json:"event_data"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return response.Error(c, fiber.StatusBadRequest, "BAD_REQUEST", "Format request tidak valid")
+	}
+
+	validTypes := map[string]bool{
+		"symptom_mentioned": true, "hypothesis_proposed": true, "question_asked": true,
+		"differential_explored": true, "hypothesis_committed": true,
+		"new_info_received": true, "hypothesis_revised": true,
+	}
+	if !validTypes[body.EventType] {
+		return response.Error(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "event_type tidak valid")
+	}
+
+	var status string
+	if err := h.db.QueryRow(c.Context(),
+		`SELECT status FROM sessions WHERE id = $1 AND student_id = $2`,
+		sessionID, studentID,
+	).Scan(&status); err != nil {
+		return response.Error(c, fiber.StatusNotFound, "NOT_FOUND", "Sesi tidak ditemukan")
+	}
+	if status != "in_progress" {
+		return response.Error(c, fiber.StatusConflict, "SESSION_CLOSED", "Sesi sudah disubmit atau ditutup")
+	}
+
+	var seqNum int
+	h.db.QueryRow(c.Context(),
+		`SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM session_events WHERE session_id = $1`,
+		sessionID,
+	).Scan(&seqNum)
+
+	var eventData *string
+	if len(body.EventData) > 0 && string(body.EventData) != "null" {
+		s := string(body.EventData)
+		eventData = &s
+	}
+
+	var eventID string
+	if err := h.db.QueryRow(c.Context(), `
+		INSERT INTO session_events (session_id, event_type, event_data, sequence_number)
+		VALUES ($1, $2, $3::jsonb, $4) RETURNING id`,
+		sessionID, body.EventType, eventData, seqNum,
+	).Scan(&eventID); err != nil {
+		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
+	}
+
+	return response.OK(c, fiber.Map{
+		"id":              eventID,
+		"session_id":      sessionID,
+		"event_type":      body.EventType,
+		"sequence_number": seqNum,
 	})
 }
 
