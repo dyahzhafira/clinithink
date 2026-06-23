@@ -137,6 +137,9 @@ func (h *Handler) GetDTI(c *fiber.Ctx) error {
 		r.Responses = json.RawMessage(respRaw)
 		results = append(results, r)
 	}
+	if err := rows.Err(); err != nil {
+		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
+	}
 
 	return response.OK(c, results)
 }

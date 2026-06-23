@@ -10,6 +10,7 @@ import (
 	ws "clinithink/internal/ws"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/limiter"
 	gws "github.com/gofiber/websocket/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -17,6 +18,12 @@ import (
 )
 
 func Setup(app *fiber.App, cfg *config.Config, db *pgxpool.Pool, rdb *redis.Client, hub *ws.Hub) {
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "http://localhost:3000",
+		AllowHeaders: "Origin, Content-Type, Authorization",
+		AllowMethods: "GET, POST, PUT, DELETE, OPTIONS",
+	}))
+
 	h := handlers.New(cfg, db, rdb, hub)
 	authMW := middleware.JWT(cfg.JWTSecret)
 
@@ -81,6 +88,7 @@ func Setup(app *fiber.App, cfg *config.Config, db *pgxpool.Pool, rdb *redis.Clie
 	p.Post("/sct-items/:id/expert-response", h.SubmitExpertResponse)
 
 	p.Get("/students/me", h.GetMe)
+	p.Put("/students/me", h.UpdateMe)
 	p.Get("/students/me/summary", h.GetSummary)
 
 	p.Post("/dti", h.SubmitDTI)

@@ -76,6 +76,9 @@ func (h *Handler) ListCases(c *fiber.Ctx) error {
 		}
 		cases = append(cases, item)
 	}
+	if err := rows.Err(); err != nil {
+		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
+	}
 
 	return c.JSON(fiber.Map{
 		"success": true,
@@ -159,6 +162,9 @@ func (h *Handler) GetCase(c *fiber.Ctx) error {
 			"relevance_note":          note,
 		})
 	}
+	if err := ddRows.Err(); err != nil {
+		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
+	}
 
 	// OSCE checklist
 	checkRows, err := h.db.Query(c.Context(), `
@@ -183,6 +189,9 @@ func (h *Handler) GetCase(c *fiber.Ctx) error {
 		case "workup":
 			workup = append(workup, itemText)
 		}
+	}
+	if err := checkRows.Err(); err != nil {
+		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
 	}
 	detail.OSCEChecklist = fiber.Map{
 		"anamnesis_items":     anamnesis,
@@ -212,6 +221,9 @@ func (h *Handler) GetCase(c *fiber.Ctx) error {
 			"hypothesis_tested": hypothesis,
 			"rationale":         rationale,
 		})
+	}
+	if err := sctRows.Err(); err != nil {
+		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
 	}
 
 	return response.OK(c, detail)

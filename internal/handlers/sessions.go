@@ -90,6 +90,9 @@ func (h *Handler) ListSessions(c *fiber.Ctx) error {
 		}
 		sessions = append(sessions, item)
 	}
+	if err := rows.Err(); err != nil {
+		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
+	}
 
 	return c.JSON(fiber.Map{
 		"success": true,
@@ -225,6 +228,33 @@ func (h *Handler) BiasCheck(c *fiber.Ctx) error {
 		return response.Error(c, fiber.StatusNotFound, "NOT_FOUND", "Sesi tidak ditemukan")
 	}
 
+	// Return cached detections if already computed for this session
+	cachedRows, err := h.db.Query(c.Context(),
+		`SELECT bias_type, detected_at_sequence, confidence_note
+		 FROM bias_detections WHERE session_id = $1 ORDER BY detected_at_sequence`, sessionID)
+	if err != nil {
+		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
+	}
+	defer cachedRows.Close()
+
+	cached := []bias.DetectionResult{}
+	for cachedRows.Next() {
+		var r bias.DetectionResult
+		if err := cachedRows.Scan(&r.BiasType, &r.DetectedAtSequence, &r.ConfidenceNote); err != nil {
+			return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
+		}
+		cached = append(cached, r)
+	}
+	cachedRows.Close()
+
+	if len(cached) > 0 {
+		return response.OK(c, fiber.Map{
+			"session_id": sessionID,
+			"detections": cached,
+			"cached":     true,
+		})
+	}
+
 	rows, err := h.db.Query(c.Context(),
 		`SELECT event_type, sequence_number FROM session_events
 		 WHERE session_id = $1 ORDER BY sequence_number`, sessionID)
@@ -241,13 +271,18 @@ func (h *Handler) BiasCheck(c *fiber.Ctx) error {
 		}
 		events = append(events, e)
 	}
+	if err := rows.Err(); err != nil {
+		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
+	}
 
 	results := bias.Detect(events)
 	for _, r := range results {
-		h.db.Exec(c.Context(), `
+		if _, err := h.db.Exec(c.Context(), `
 			INSERT INTO bias_detections (session_id, bias_type, detected_at_sequence, confidence_note)
 			VALUES ($1, $2, $3, $4)`,
-			sessionID, r.BiasType, r.DetectedAtSequence, r.ConfidenceNote)
+			sessionID, r.BiasType, r.DetectedAtSequence, r.ConfidenceNote); err != nil {
+			return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
+		}
 	}
 
 	if results == nil {
@@ -298,10 +333,12 @@ func (h *Handler) LogEvent(c *fiber.Ctx) error {
 	}
 
 	var seqNum int
-	h.db.QueryRow(c.Context(),
+	if err := h.db.QueryRow(c.Context(),
 		`SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM session_events WHERE session_id = $1`,
 		sessionID,
-	).Scan(&seqNum)
+	).Scan(&seqNum); err != nil {
+		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
+	}
 
 	var eventData *string
 	if len(body.EventData) > 0 && string(body.EventData) != "null" {
@@ -331,8 +368,104 @@ func (h *Handler) SubmitAnalysis(c *fiber.Ctx) error {
 	return response.NotImplemented(c)
 }
 
-// GetAnalysis
+// GetAnalysis returns aggregated session results: reasoning text, SCT scores, bias detections.
 func (h *Handler) GetAnalysis(c *fiber.Ctx) error {
-	return response.NotImplemented(c)
+	studentID, ok := c.Locals("user_id").(string)
+	if !ok || studentID == "" {
+		return response.Error(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Token tidak valid")
+	}
+
+	sessionID := c.Params("id")
+
+	var status string
+	if err := h.db.QueryRow(c.Context(),
+		`SELECT status FROM sessions WHERE id = $1 AND student_id = $2`,
+		sessionID, studentID,
+	).Scan(&status); err != nil {
+		return response.Error(c, fiber.StatusNotFound, "NOT_FOUND", "Sesi tidak ditemukan")
+	}
+	if status != "submitted" {
+		return response.Error(c, fiber.StatusConflict, "SESSION_NOT_SUBMITTED", "Analisis hanya tersedia untuk sesi yang sudah selesai")
+	}
+
+	// Reasoning text
+	var reasoningRaw string
+	h.db.QueryRow(c.Context(),
+		`SELECT raw_input FROM reasoning_submissions WHERE session_id = $1 ORDER BY submitted_at DESC LIMIT 1`,
+		sessionID,
+	).Scan(&reasoningRaw)
+
+	// SCT per-item scores
+	type sctItem struct {
+		SCTItemID           string  `json:"sct_item_id"`
+		StudentResponse     string  `json:"student_response"`
+		ExpertModalResponse string  `json:"expert_modal_response"`
+		Score               float64 `json:"score"`
+	}
+	sctItems := []sctItem{}
+	var totalScore float64
+
+	sctRows, err := h.db.Query(c.Context(), `
+		SELECT ss.sct_item_id, ss.student_response, ss.expert_modal_response, ss.score_obtained
+		FROM sct_scores ss
+		JOIN reasoning_submissions rs ON rs.id = ss.submission_id
+		WHERE rs.session_id = $1
+		ORDER BY ss.created_at`, sessionID)
+	if err == nil {
+		for sctRows.Next() {
+			var item sctItem
+			if err := sctRows.Scan(&item.SCTItemID, &item.StudentResponse, &item.ExpertModalResponse, &item.Score); err == nil {
+				totalScore += item.Score
+				sctItems = append(sctItems, item)
+			}
+		}
+		sctRows.Close()
+	}
+
+	var sctNormalized *float64
+	if len(sctItems) > 0 {
+		n := totalScore / float64(len(sctItems))
+		sctNormalized = &n
+	}
+
+	// Bias detections from cache
+	type biasDetection struct {
+		BiasType           string `json:"bias_type"`
+		DetectedAtSequence int    `json:"detected_at_sequence"`
+		ConfidenceNote     string `json:"confidence_note"`
+	}
+	biasDetections := []biasDetection{}
+
+	biasRows, err := h.db.Query(c.Context(),
+		`SELECT bias_type, detected_at_sequence, confidence_note
+		 FROM bias_detections WHERE session_id = $1 ORDER BY detected_at_sequence`, sessionID)
+	if err == nil {
+		for biasRows.Next() {
+			var b biasDetection
+			if err := biasRows.Scan(&b.BiasType, &b.DetectedAtSequence, &b.ConfidenceNote); err == nil {
+				biasDetections = append(biasDetections, b)
+			}
+		}
+		biasRows.Close()
+	}
+
+	var topBias *string
+	if len(biasDetections) > 0 {
+		h.db.QueryRow(c.Context(),
+			`SELECT bias_type FROM bias_detections WHERE session_id = $1
+			 GROUP BY bias_type ORDER BY COUNT(*) DESC LIMIT 1`, sessionID,
+		).Scan(&topBias)
+	}
+
+	return response.OK(c, fiber.Map{
+		"session_id":           sessionID,
+		"reasoning_raw":        reasoningRaw,
+		"sct_normalized_score": sctNormalized,
+		"sct_total_items":      len(sctItems),
+		"sct_items":            sctItems,
+		"bias_count":           len(biasDetections),
+		"top_bias_type":        topBias,
+		"bias_detections":      biasDetections,
+	})
 }
 

@@ -12,8 +12,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// WebSocketAuth is an HTTP middleware that validates JWT from ?token= query param.
-// Must run before the WebSocket upgrade handler.
 func (h *Handler) WebSocketAuth(c *fiber.Ctx) error {
 	if !gws.IsWebSocketUpgrade(c) {
 		return fiber.ErrUpgradeRequired

@@ -88,11 +88,13 @@ func (h *Handler) SubmitSCT(c *fiber.Ctx) error {
 		score := scoreSCT(answer.Response, modalResponse)
 		totalScore += score
 
-		h.db.Exec(c.Context(), `
+		if _, err := h.db.Exec(c.Context(), `
 			INSERT INTO sct_scores (submission_id, sct_item_id, student_response, expert_modal_response, score_obtained)
 			VALUES ($1, $2, $3, $4, $5)`,
 			submissionID, answer.SCTItemID, answer.Response, modalResponse, score,
-		)
+		); err != nil {
+			return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
+		}
 
 		results = append(results, itemResult{
 			SCTItemID:           answer.SCTItemID,
@@ -159,6 +161,9 @@ func (h *Handler) GetSCTScores(c *fiber.Ctx) error {
 		totalScore += item.Score
 		items = append(items, item)
 	}
+	if err := rows.Err(); err != nil {
+		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
+	}
 
 	normalizedScore := 0.0
 	if len(items) > 0 {
@@ -178,6 +183,10 @@ func (h *Handler) SubmitExpertResponse(c *fiber.Ctx) error {
 	expertID, ok := c.Locals("user_id").(string)
 	if !ok || expertID == "" {
 		return response.Error(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Token tidak valid")
+	}
+	role, _ := c.Locals("user_role").(string)
+	if role != "expert" {
+		return response.Error(c, fiber.StatusForbidden, "FORBIDDEN", "Hanya expert yang dapat mengisi respons panel")
 	}
 
 	sctItemID := c.Params("id")
