@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: clinithink
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: clinithink_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://clinithink:password@localhost:5432/clinithink_test?sslmode=disable
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-test-secret-key-minimum-32-characters
+      JWT_EXPIRY: 24h
+      PORT: 8080
+      APP_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Run schema
+        run: PGPASSWORD=password psql -h localhost -U clinithink -d clinithink_test -f internal/database/schema.sql
+
+      - name: Seed case bank
+        run: go run ./cmd/seed/
+
+      - name: Test
+        run: go test ./...
