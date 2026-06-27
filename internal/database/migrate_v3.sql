@@ -11,7 +11,7 @@
 -- ------------------------------------------------------------
 -- 1. SCT RUBRIC ITEMS
 -- ------------------------------------------------------------
-CREATE TABLE sct_rubric_items (
+CREATE TABLE IF NOT EXISTS  sct_rubric_items (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   case_id UUID NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
   finding_category VARCHAR(100) NOT NULL,
@@ -27,7 +27,7 @@ COMMENT ON TABLE sct_rubric_items IS 'Rubrik SCT per case, dipakai untuk scoring
 -- ------------------------------------------------------------
 -- 2. BIAS RUBRIC ITEMS
 -- ------------------------------------------------------------
-CREATE TABLE bias_rubric_items (
+CREATE TABLE IF NOT EXISTS bias_rubric_items (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   case_id UUID NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
   bias_type VARCHAR(30) NOT NULL CHECK (bias_type IN ('premature_closure', 'anchoring_bias')),
@@ -42,7 +42,7 @@ COMMENT ON TABLE bias_rubric_items IS 'Rubrik deteksi bias per case, dipakai rul
 -- ------------------------------------------------------------
 -- 3. SIMULATION SESSIONS
 -- ------------------------------------------------------------
-CREATE TABLE simulation_sessions (
+CREATE TABLE IF NOT EXISTS  simulation_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   student_id UUID NOT NULL REFERENCES students(id),
   case_id UUID NOT NULL REFERENCES cases(id),
@@ -59,9 +59,9 @@ CREATE TABLE simulation_sessions (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_simulation_sessions_student ON simulation_sessions(student_id);
-CREATE INDEX idx_simulation_sessions_case ON simulation_sessions(case_id);
-CREATE INDEX idx_simulation_sessions_status ON simulation_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_simulation_sessions_student ON simulation_sessions(student_id);
+CREATE INDEX IF NOT EXISTS idx_simulation_sessions_case ON simulation_sessions(case_id);
+CREATE INDEX IF NOT EXISTS idx_simulation_sessions_status ON simulation_sessions(status);
 
 COMMENT ON TABLE simulation_sessions IS 'Sesi simulasi dengan skenario generative. Menggantikan sessions lama untuk flow baru. sessions lama dipertahankan untuk kompatibilitas data existing, tidak menerima sesi baru setelah migration ini.';
 COMMENT ON COLUMN simulation_sessions.embedded_finding_categories IS 'Daftar finding_category yang dilaporkan AI Orchestrator tersisip di generated_scenario. WAJIB divalidasi terhadap sct_rubric_items dan bias_rubric_items untuk case_id terkait SEBELUM is_validated diset true. Lihat larangan #13.';
@@ -69,7 +69,7 @@ COMMENT ON COLUMN simulation_sessions.embedded_finding_categories IS 'Daftar fin
 -- ------------------------------------------------------------
 -- 4. TABEL ANAK SIMULATION SESSIONS
 -- ------------------------------------------------------------
-CREATE TABLE simulation_reasoning_submissions (
+CREATE TABLE IF NOT EXISTS simulation_reasoning_submissions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id UUID NOT NULL REFERENCES simulation_sessions(id) ON DELETE CASCADE,
   raw_input TEXT NOT NULL,
@@ -79,9 +79,9 @@ CREATE TABLE simulation_reasoning_submissions (
   submitted_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_sim_reasoning_session ON simulation_reasoning_submissions(session_id);
+CREATE INDEX IF NOT EXISTS idx_sim_reasoning_session ON simulation_reasoning_submissions(session_id);
 
-CREATE TABLE simulation_session_events (
+CREATE TABLE IF NOT EXISTS  simulation_session_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id UUID NOT NULL REFERENCES simulation_sessions(id) ON DELETE CASCADE,
   event_type VARCHAR(50) NOT NULL,
@@ -90,10 +90,10 @@ CREATE TABLE simulation_session_events (
   occurred_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_sim_events_session ON simulation_session_events(session_id);
-CREATE INDEX idx_sim_events_sequence ON simulation_session_events(session_id, sequence_number);
+CREATE INDEX IF NOT EXISTS idx_sim_events_session ON simulation_session_events(session_id);
+CREATE INDEX IF NOT EXISTS idx_sim_events_sequence ON simulation_session_events(session_id, sequence_number);
 
-CREATE TABLE simulation_sct_scores (
+CREATE TABLE IF NOT EXISTS simulation_sct_scores (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id UUID NOT NULL REFERENCES simulation_sessions(id) ON DELETE CASCADE,
   rubric_item_id UUID NOT NULL REFERENCES sct_rubric_items(id),
@@ -104,9 +104,9 @@ CREATE TABLE simulation_sct_scores (
   UNIQUE(session_id, rubric_item_id)
 );
 
-CREATE INDEX idx_sim_sct_scores_session ON simulation_sct_scores(session_id);
+CREATE INDEX IF NOT EXISTS idx_sim_sct_scores_session ON simulation_sct_scores(session_id);
 
-CREATE TABLE simulation_bias_detections (
+CREATE TABLE IF NOT EXISTS  simulation_bias_detections (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id UUID NOT NULL REFERENCES simulation_sessions(id) ON DELETE CASCADE,
   bias_type VARCHAR(30) NOT NULL,
@@ -116,7 +116,7 @@ CREATE TABLE simulation_bias_detections (
   UNIQUE(session_id, bias_type)
 );
 
-CREATE INDEX idx_sim_bias_session ON simulation_bias_detections(session_id);
+CREATE INDEX IF NOT EXISTS idx_sim_bias_session ON simulation_bias_detections(session_id);
 
 -- ------------------------------------------------------------
 -- 5. DEPRECATION MARKERS

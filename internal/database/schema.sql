@@ -2,14 +2,14 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS vector;
 
 -- CASE BANK
-CREATE TABLE systems (
+CREATE TABLE IF NOT EXISTS  systems (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     system_code VARCHAR(20) UNIQUE NOT NULL,  -- e.g. 'RESP', 'CARDIO'
     system_name VARCHAR(100) NOT NULL, -- e.g. 'Respirasi'
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE TABLE cases (
+CREATE TABLE IF NOT EXISTS  cases (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     case_id VARCHAR(20) UNIQUE NOT NULL,      -- e.g. 'RESP-001'
     system_id UUID REFERENCES systems(id) ON DELETE CASCADE,
@@ -28,11 +28,11 @@ CREATE TABLE cases (
     updated_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_cases_system ON cases(system_id);
-CREATE INDEX idx_cases_difficulty ON cases(difficulty);
+CREATE INDEX IF NOT EXISTS idx_cases_system ON cases(system_id);
+CREATE INDEX IF NOT EXISTS idx_cases_difficulty ON cases(difficulty);
 
 -- ILLNESS SCRIPT (komponen inti: enabling conditions, fault, consequences)
-CREATE TABLE illness_scripts (
+CREATE TABLE IF NOT EXISTS  illness_scripts (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     case_id UUID REFERENCES cases(id) ON DELETE CASCADE,
     primary_diagnosis VARCHAR(255) NOT NULL,
@@ -49,13 +49,13 @@ CREATE TABLE illness_scripts (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_illness_scripts_case ON illness_scripts(case_id);
-CREATE INDEX idx_illness_scripts_embedding ON illness_scripts
+CREATE INDEX IF NOT EXISTS idx_illness_scripts_case ON illness_scripts(case_id);
+CREATE INDEX IF NOT EXISTS idx_illness_scripts_embedding ON illness_scripts
     USING hnsw (embedding vector_cosine_ops);
 
 -- DIFFERENTIAL DIAGNOSES (untuk missing hypothesis detection)
 
-CREATE TABLE differential_diagnoses (
+CREATE TABLE IF NOT EXISTS  differential_diagnoses (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     case_id UUID REFERENCES cases(id) ON DELETE CASCADE,
     diagnosis VARCHAR(255) NOT NULL,
@@ -66,12 +66,12 @@ CREATE TABLE differential_diagnoses (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_diff_dx_case ON differential_diagnoses(case_id);
-CREATE INDEX idx_diff_dx_embedding ON differential_diagnoses
+CREATE INDEX IF NOT EXISTS idx_diff_dx_case ON differential_diagnoses(case_id);
+CREATE INDEX IF NOT EXISTS idx_diff_dx_embedding ON differential_diagnoses
     USING hnsw (embedding vector_cosine_ops);
 
 -- OSCE CHECKLIST
-CREATE TABLE osce_checklist_items (
+CREATE TABLE IF NOT EXISTS  osce_checklist_items (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     case_id UUID REFERENCES cases(id) ON DELETE CASCADE,
     item_type VARCHAR(30) CHECK (item_type IN ('anamnesis', 'physical_exam', 'workup')),
@@ -81,11 +81,11 @@ CREATE TABLE osce_checklist_items (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_checklist_case ON osce_checklist_items(case_id);
-CREATE INDEX idx_checklist_type ON osce_checklist_items(item_type);
+CREATE INDEX IF NOT EXISTS idx_checklist_case ON osce_checklist_items(case_id);
+CREATE INDEX IF NOT EXISTS idx_checklist_type ON osce_checklist_items(item_type);
 
 -- SCT ITEMS (basis scoring AI)
-CREATE TABLE sct_items (
+CREATE TABLE IF NOT EXISTS  sct_items (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     item_id VARCHAR(30) UNIQUE NOT NULL, -- e.g. 'RESP-001-SCT1'
     case_id UUID REFERENCES cases(id) ON DELETE CASCADE,
@@ -101,10 +101,10 @@ CREATE TABLE sct_items (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_sct_case ON sct_items(case_id);
+CREATE INDEX IF NOT EXISTS idx_sct_case ON sct_items(case_id);
 
 -- Tabel jawaban tiap dosen di expert panel (sebelum diagregat jadi modal response)
-CREATE TABLE sct_expert_responses (
+CREATE TABLE IF NOT EXISTS  sct_expert_responses (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     sct_item_id UUID REFERENCES sct_items(id) ON DELETE CASCADE,
     expert_id UUID NOT NULL,  -- FK ke tabel dosen panel
@@ -112,10 +112,10 @@ CREATE TABLE sct_expert_responses (
     submitted_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_sct_responses_item ON sct_expert_responses(sct_item_id);
+CREATE INDEX IF NOT EXISTS idx_sct_responses_item ON sct_expert_responses(sct_item_id);
 
 -- BIAS TRIGGERS (metadata untuk kalibrasi sistem deteksi bias)
-CREATE TABLE case_bias_metadata (
+CREATE TABLE IF NOT EXISTS  case_bias_metadata (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     case_id UUID REFERENCES cases(id) ON DELETE CASCADE,
     premature_closure_risk VARCHAR(20) CHECK (premature_closure_risk IN ('rendah', 'sedang', 'tinggi', 'sangat tinggi')),
@@ -125,7 +125,7 @@ CREATE TABLE case_bias_metadata (
 );
 
 -- STUDENT INTERACTION & EVENT LOG (untuk bias detection realtime)
-CREATE TABLE students (
+CREATE TABLE IF NOT EXISTS  students (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
@@ -135,7 +135,7 @@ CREATE TABLE students (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE TABLE sessions (
+CREATE TABLE IF NOT EXISTS  sessions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     student_id UUID REFERENCES students(id) ON DELETE CASCADE,
     case_id UUID REFERENCES cases(id),
@@ -144,11 +144,11 @@ CREATE TABLE sessions (
     status VARCHAR(20) DEFAULT 'in_progress' CHECK (status IN ('in_progress', 'submitted', 'abandoned'))
 );
 
-CREATE INDEX idx_sessions_student ON sessions(student_id);
-CREATE INDEX idx_sessions_case ON sessions(case_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_student ON sessions(student_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_case ON sessions(case_id);
 
 -- Event log granular untuk sequence analysis (bias detection)
-CREATE TABLE session_events (
+CREATE TABLE IF NOT EXISTS  session_events (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
     event_type VARCHAR(30) NOT NULL CHECK (event_type IN (
@@ -161,12 +161,12 @@ CREATE TABLE session_events (
     timestamp TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_events_session ON session_events(session_id);
-CREATE INDEX idx_events_sequence ON session_events(session_id, sequence_number);
+CREATE INDEX IF NOT EXISTS idx_events_session ON session_events(session_id);
+CREATE INDEX IF NOT EXISTS idx_events_sequence ON session_events(session_id, sequence_number);
 
 -- REASONING SUBMISSION & PARSING RESULT
 
-CREATE TABLE reasoning_submissions (
+CREATE TABLE IF NOT EXISTS  reasoning_submissions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
 
@@ -181,11 +181,11 @@ CREATE TABLE reasoning_submissions (
     submitted_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_submissions_session ON reasoning_submissions(session_id);
+CREATE INDEX IF NOT EXISTS idx_submissions_session ON reasoning_submissions(session_id);
 
 -- ANALYSIS RESULTS (output dari Analysis Engine)
 
-CREATE TABLE missing_hypotheses_detected (
+CREATE TABLE IF NOT EXISTS  missing_hypotheses_detected (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     submission_id UUID REFERENCES reasoning_submissions(id) ON DELETE CASCADE,
     differential_diagnosis_id UUID REFERENCES differential_diagnoses(id),
@@ -194,7 +194,7 @@ CREATE TABLE missing_hypotheses_detected (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE TABLE bias_detections (
+CREATE TABLE IF NOT EXISTS  bias_detections (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
     bias_type VARCHAR(30) CHECK (bias_type IN ('premature_closure', 'anchoring_bias')),
@@ -204,7 +204,7 @@ CREATE TABLE bias_detections (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE TABLE sct_scores (
+CREATE TABLE IF NOT EXISTS  sct_scores (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     submission_id UUID REFERENCES reasoning_submissions(id) ON DELETE CASCADE,
     sct_item_id UUID REFERENCES sct_items(id),
@@ -217,7 +217,7 @@ CREATE TABLE sct_scores (
 
 -- DTI PRE/POST TEST
 
-CREATE TABLE dti_responses (
+CREATE TABLE IF NOT EXISTS  dti_responses (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     student_id UUID REFERENCES students(id) ON DELETE CASCADE,
     test_phase VARCHAR(10) CHECK (test_phase IN ('pre', 'post')),
@@ -231,7 +231,7 @@ CREATE TABLE dti_responses (
     submitted_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_dti_student ON dti_responses(student_id);
+CREATE INDEX IF NOT EXISTS idx_dti_student ON dti_responses(student_id);
 
 -- ============================================================
 -- MIGRATION v3 — Generative Case System
@@ -246,7 +246,7 @@ CREATE INDEX idx_dti_student ON dti_responses(student_id);
 -- cases + illness_scripts + differential_diagnoses yang sudah
 -- ada, terhubung lewat case_id. Tidak perlu tabel master baru.
 -- ------------------------------------------------------------
-CREATE TABLE sct_rubric_items (
+CREATE TABLE IF NOT EXISTS  sct_rubric_items (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   case_id UUID NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
   finding_category VARCHAR(100) NOT NULL,
@@ -262,7 +262,7 @@ COMMENT ON TABLE sct_rubric_items IS 'Rubrik SCT per case, dipakai untuk scoring
 -- ------------------------------------------------------------
 -- 2. BIAS RUBRIC ITEMS
 -- ------------------------------------------------------------
-CREATE TABLE bias_rubric_items (
+CREATE TABLE IF NOT EXISTS  bias_rubric_items (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   case_id UUID NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
   bias_type VARCHAR(30) NOT NULL CHECK (bias_type IN ('premature_closure', 'anchoring_bias')),
@@ -277,7 +277,7 @@ COMMENT ON TABLE bias_rubric_items IS 'Rubrik deteksi bias per case, dipakai rul
 -- ------------------------------------------------------------
 -- 3. SIMULATION SESSIONS
 -- ------------------------------------------------------------
-CREATE TABLE simulation_sessions (
+CREATE TABLE IF NOT EXISTS  simulation_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   student_id UUID NOT NULL REFERENCES students(id),
   case_id UUID NOT NULL REFERENCES cases(id),
@@ -294,9 +294,9 @@ CREATE TABLE simulation_sessions (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_simulation_sessions_student ON simulation_sessions(student_id);
-CREATE INDEX idx_simulation_sessions_case ON simulation_sessions(case_id);
-CREATE INDEX idx_simulation_sessions_status ON simulation_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_simulation_sessions_student ON simulation_sessions(student_id);
+CREATE INDEX IF NOT EXISTS idx_simulation_sessions_case ON simulation_sessions(case_id);
+CREATE INDEX IF NOT EXISTS idx_simulation_sessions_status ON simulation_sessions(status);
 
 COMMENT ON TABLE simulation_sessions IS 'Sesi simulasi dengan skenario generative. Menggantikan sessions lama untuk flow baru. sessions lama dipertahankan untuk kompatibilitas data existing, tidak menerima sesi baru setelah migration ini.';
 COMMENT ON COLUMN simulation_sessions.embedded_finding_categories IS 'Daftar finding_category yang dilaporkan AI Orchestrator tersisip di generated_scenario. WAJIB divalidasi terhadap sct_rubric_items dan bias_rubric_items untuk case_id terkait SEBELUM is_validated diset true. Lihat larangan #13.';
@@ -304,7 +304,7 @@ COMMENT ON COLUMN simulation_sessions.embedded_finding_categories IS 'Daftar fin
 -- ------------------------------------------------------------
 -- 4. TABEL ANAK SIMULATION SESSIONS
 -- ------------------------------------------------------------
-CREATE TABLE simulation_reasoning_submissions (
+CREATE TABLE IF NOT EXISTS  simulation_reasoning_submissions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id UUID NOT NULL REFERENCES simulation_sessions(id) ON DELETE CASCADE,
   raw_input TEXT NOT NULL,
@@ -314,9 +314,9 @@ CREATE TABLE simulation_reasoning_submissions (
   submitted_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_sim_reasoning_session ON simulation_reasoning_submissions(session_id);
+CREATE INDEX IF NOT EXISTS idx_sim_reasoning_session ON simulation_reasoning_submissions(session_id);
 
-CREATE TABLE simulation_session_events (
+CREATE TABLE IF NOT EXISTS  simulation_session_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id UUID NOT NULL REFERENCES simulation_sessions(id) ON DELETE CASCADE,
   event_type VARCHAR(50) NOT NULL,
@@ -325,10 +325,10 @@ CREATE TABLE simulation_session_events (
   occurred_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_sim_events_session ON simulation_session_events(session_id);
-CREATE INDEX idx_sim_events_sequence ON simulation_session_events(session_id, sequence_number);
+CREATE INDEX IF NOT EXISTS idx_sim_events_session ON simulation_session_events(session_id);
+CREATE INDEX IF NOT EXISTS idx_sim_events_sequence ON simulation_session_events(session_id, sequence_number);
 
-CREATE TABLE simulation_sct_scores (
+CREATE TABLE IF NOT EXISTS  simulation_sct_scores (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id UUID NOT NULL REFERENCES simulation_sessions(id) ON DELETE CASCADE,
   rubric_item_id UUID NOT NULL REFERENCES sct_rubric_items(id),
@@ -339,9 +339,9 @@ CREATE TABLE simulation_sct_scores (
   UNIQUE(session_id, rubric_item_id)
 );
 
-CREATE INDEX idx_sim_sct_scores_session ON simulation_sct_scores(session_id);
+CREATE INDEX IF NOT EXISTS idx_sim_sct_scores_session ON simulation_sct_scores(session_id);
 
-CREATE TABLE simulation_bias_detections (
+CREATE TABLE IF NOT EXISTS  simulation_bias_detections (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id UUID NOT NULL REFERENCES simulation_sessions(id) ON DELETE CASCADE,
   bias_type VARCHAR(30) NOT NULL,
@@ -351,7 +351,7 @@ CREATE TABLE simulation_bias_detections (
   UNIQUE(session_id, bias_type)
 );
 
-CREATE INDEX idx_sim_bias_session ON simulation_bias_detections(session_id);
+CREATE INDEX IF NOT EXISTS idx_sim_bias_session ON simulation_bias_detections(session_id);
 
 -- ------------------------------------------------------------
 -- 5. DEPRECATION MARKERS
