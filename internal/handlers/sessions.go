@@ -354,9 +354,17 @@ func (h *Handler) LogEvent(c *fiber.Ctx) error {
 	}
 
 	validTypes := map[string]bool{
-		"symptom_mentioned": true, "hypothesis_proposed": true, "question_asked": true,
-		"differential_explored": true, "hypothesis_committed": true,
-		"new_info_received": true, "hypothesis_revised": true,
+		// Event yang dikirim oleh frontend (aktivitas mahasiswa)
+		"symptom_mentioned":     true,
+		"hypothesis_proposed":   true,
+		"question_asked":        true,
+		"differential_explored": true,
+		"hypothesis_committed":  true,
+		"new_info_received":     true,
+		"hypothesis_revised":    true,
+		// Event yang dikirim oleh backend (respons AI, untuk replay whiteboard)
+		"ai_action":             true,
+		"ai_response":           true,
 	}
 	if !validTypes[body.EventType] {
 		return response.Error(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "event_type tidak valid")
@@ -404,9 +412,24 @@ func (h *Handler) LogEvent(c *fiber.Ctx) error {
 	})
 }
 
-// ngambil riwayat event tanpa harus ngirim data baru
+// GetEvents mengambil riwayat event sesi untuk keperluan replay whiteboard.
+// Hanya student pemilik sesi yang dapat mengakses.
 func (h *Handler) GetEvents(c *fiber.Ctx) error {
+	studentID, ok := c.Locals("user_id").(string)
+	if !ok || studentID == "" {
+		return response.Error(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Token tidak valid")
+	}
+
 	sessionID := c.Params("id")
+
+	// Validasi kepemilikan sesi (Bug 12 fix)
+	var exists bool
+	if err := h.db.QueryRow(c.Context(),
+		`SELECT EXISTS(SELECT 1 FROM sessions WHERE id = $1 AND student_id = $2)`,
+		sessionID, studentID,
+	).Scan(&exists); err != nil || !exists {
+		return response.Error(c, fiber.StatusNotFound, "NOT_FOUND", "Sesi tidak ditemukan")
+	}
 
 	rows, err := h.db.Query(c.Context(),
 		`SELECT id, event_type, event_data, sequence_number 
@@ -424,7 +447,7 @@ func (h *Handler) GetEvents(c *fiber.Ctx) error {
 		SequenceNumber int             `json:"sequence_number"`
 	}
 
-	var events []eventItem
+	events := []eventItem{}
 	for rows.Next() {
 		var e eventItem
 		if err := rows.Scan(&e.ID, &e.EventType, &e.EventData, &e.SequenceNumber); err == nil {

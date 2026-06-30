@@ -35,7 +35,8 @@ func (h *Handler) WebSocketAuth(c *fiber.Ctx) error {
 	return c.Next()
 }
 
-// calculates remaining time from session.started_at + case.station_duration_minutes
+// HandleSession menangani koneksi WebSocket untuk sesi simulasi.
+// Bertanggung jawab untuk memulai timer dan meneruskan event ke frontend via LiveKit.
 func (h *Handler) HandleSession(c *gws.Conn) {
 	sessionID := c.Params("id")
 	studentID, _ := c.Locals("user_id").(string)
@@ -71,9 +72,10 @@ func (h *Handler) HandleSession(c *gws.Conn) {
 	h.hub.Register(sessionID, c, cancel)
 	defer h.hub.Unregister(sessionID)
 
-	go ws.StartTimer(ctx, sessionID, int(remaining.Seconds()), h.db, h.hub)
+	// StartTimer sekarang menggunakan h.roomClient (LiveKit) untuk mengirim timer_tick
+	go ws.StartTimer(ctx, sessionID, int(remaining.Seconds()), h.roomClient)
 
-	// Read loop
+	// Read loop — tetap terbuka selama koneksi aktif
 	for {
 		if _, _, err := c.ReadMessage(); err != nil {
 			break
