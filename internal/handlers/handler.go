@@ -227,11 +227,14 @@ func (h *Handler) Chat(c *fiber.Ctx) error {
 	})
 }
 
-// sendWhiteboardAction mengirim whiteboard action ke room LiveKit dan mencatatnya ke session_events.
+// sendWhiteboardAction mengirim whiteboard action ke room LiveKit dengan format standar ai_action,
+// dan mencatatnya ke session_events untuk keperluan replay whiteboard.
 func (h *Handler) sendWhiteboardAction(ctx context.Context, sessionID string, action interface{}, seqNum int) {
+	// Format standar: { "type": "ai_action", "payload": { "type": "add_node", "data": {...} } }
+	// Harus konsisten dengan format yang dikirim AI Python (main.py).
 	payload, err := json.Marshal(map[string]interface{}{
-		"type": "whiteboard_action",
-		"data": action,
+		"type":    "ai_action",
+		"payload": action,
 	})
 	if err != nil {
 		log.Printf("[sendWhiteboardAction] Marshal error: %v", err)
@@ -248,15 +251,18 @@ func (h *Handler) sendWhiteboardAction(ctx context.Context, sessionID string, ac
 		return
 	}
 
-	// Log ke session_events untuk replay
-	actionData, _ := json.Marshal(action)
+	// Log ke session_events dengan format yang sama untuk konsistensi replay
+	eventData, _ := json.Marshal(map[string]interface{}{
+		"type":    "ai_action",
+		"payload": action,
+	})
 	_, dbErr := h.db.Exec(ctx,
 		`INSERT INTO session_events (session_id, event_type, event_data, sequence_number)
 		 VALUES ($1, $2, $3::jsonb, $4)`,
-		sessionID, "ai_action", string(actionData), seqNum)
+		sessionID, "ai_action", string(eventData), seqNum)
 	if dbErr != nil {
 		log.Printf("[sendWhiteboardAction] Gagal log ai_action: %v", dbErr)
 	}
 
-	fmt.Printf("[sendWhiteboardAction] Action dikirim ke room %s (seq %d)\n", sessionID, seqNum)
+	fmt.Printf("[sendWhiteboardAction] ai_action dikirim ke room %s (seq %d)\n", sessionID, seqNum)
 }
