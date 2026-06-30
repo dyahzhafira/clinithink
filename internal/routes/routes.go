@@ -81,6 +81,7 @@ func Setup(app *fiber.App, cfg *config.Config, db *pgxpool.Pool, rdb *redis.Clie
 	p.Post("/sessions/:id/submit", h.SubmitReasoning)
 	p.Get("/sessions/:id/bias-check", h.BiasCheck)
 	p.Post("/sessions/:id/events", h.LogEvent)
+	p.Get("/sessions/:id/events", h.GetEvents) // ini route buat ngambil event nya
 	p.Post("/sessions/:id/sct", h.SubmitSCT)
 	p.Get("/sessions/:id/sct", h.GetSCTScores)
 	p.Post("/sessions/:id/analysis", h.SubmitAnalysis)
@@ -99,4 +100,7 @@ func Setup(app *fiber.App, cfg *config.Config, db *pgxpool.Pool, rdb *redis.Clie
 	// WebSocket
 	app.Use("/ws/sessions", h.WebSocketAuth)
 	app.Get("/ws/sessions/:id", gws.New(h.HandleSession))
+
+	// chat
+	p.Post("/sessions/:id/chat", h.Chat)
 }

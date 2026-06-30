@@ -15,6 +15,8 @@ func NewPostgres(databaseURL string) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("failed to create postgres pool: %w", err)
 	}
 
+	Pool = pool
+
 	if err := runMigrations(pool); err != nil {
 		return nil, fmt.Errorf("migration failed: %w", err)
 	}

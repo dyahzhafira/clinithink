@@ -9,6 +9,12 @@ import (
 	ws "clinithink/internal/ws"
 
 	"github.com/gofiber/fiber/v2"
+
+	"fmt"
+	"os"
+
+	"github.com/livekit/protocol/livekit"
+	lksdk "github.com/livekit/server-sdk-go/v2"
 )
 
 func (h *Handler) CreateSession(c *fiber.Ctx) error {
@@ -32,6 +38,41 @@ func (h *Handler) CreateSession(c *fiber.Ctx) error {
 	).Scan(&sessionID)
 	if err != nil {
 		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
+	}
+
+	var caseCode string
+	err = h.db.QueryRow(c.Context(), `
+		SELECT case_id FROM cases WHERE id = $1`,
+		body.CaseID,
+	).Scan(&caseCode)
+
+	if err != nil {
+		return response.Error(c, fiber.StatusNotFound, "NOT_FOUND", "Kasus tidak ditemukan")
+	}
+
+	metadata := map[string]string{
+		"case_id": caseCode, // Contoh: "NEURO-001"
+	}
+
+	metadataBytes, _ := json.Marshal(metadata)
+
+	// 2. Gunakan lksdk.NewRoomServiceClient
+	roomClient := lksdk.NewRoomServiceClient(
+		os.Getenv("LIVEKIT_HOST"),
+		os.Getenv("LIVEKIT_API_KEY"),
+		os.Getenv("LIVEKIT_API_SECRET"),
+	)
+
+	// 3. Panggil CreateRoom
+	_, err = roomClient.CreateRoom(c.Context(), &livekit.CreateRoomRequest{
+		Name:     sessionID,
+		Metadata: string(metadataBytes),
+	})
+
+	if err != nil {
+		// TAMBAHKAN LOG INI
+		fmt.Printf("ERROR LIVEKIT: %v\n", err)
+		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Gagal membuat ruang")
 	}
 
 	return response.OK(c, fiber.Map{"id": sessionID, "status": "in_progress"})
@@ -363,6 +404,37 @@ func (h *Handler) LogEvent(c *fiber.Ctx) error {
 	})
 }
 
+// ngambil riwayat event tanpa harus ngirim data baru
+func (h *Handler) GetEvents(c *fiber.Ctx) error {
+	sessionID := c.Params("id")
+
+	rows, err := h.db.Query(c.Context(),
+		`SELECT id, event_type, event_data, sequence_number 
+         FROM session_events WHERE session_id = $1 ORDER BY sequence_number ASC`,
+		sessionID)
+	if err != nil {
+		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Gagal mengambil data")
+	}
+	defer rows.Close()
+
+	type eventItem struct {
+		ID             string          `json:"id"`
+		EventType      string          `json:"event_type"`
+		EventData      json.RawMessage `json:"event_data"`
+		SequenceNumber int             `json:"sequence_number"`
+	}
+
+	var events []eventItem
+	for rows.Next() {
+		var e eventItem
+		if err := rows.Scan(&e.ID, &e.EventType, &e.EventData, &e.SequenceNumber); err == nil {
+			events = append(events, e)
+		}
+	}
+
+	return response.OK(c, fiber.Map{"events": events})
+}
+
 // SubmitAnalysis
 func (h *Handler) SubmitAnalysis(c *fiber.Ctx) error {
 	return response.NotImplemented(c)
@@ -468,4 +540,3 @@ func (h *Handler) GetAnalysis(c *fiber.Ctx) error {
 		"bias_detections":      biasDetections,
 	})
 }
-

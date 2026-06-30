@@ -8,22 +8,28 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-func SendAnalysisTrigger(sessionID string, input string, title string, diagnosis string, workup []string, anamnesis []string) error {
-	conn, err := grpc.Dial("ai:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+func SendAnalysisTrigger(sessionID string, input string, title string, diagnosis string, workup []string, anamnesis []string) (*pb.AnalysisResponse, error) {
+	conn, err := grpc.NewClient("ai:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer conn.Close()
 
 	client := pb.NewClinicServiceClient(conn)
 
-	_, err = client.TriggerAnalysis(context.Background(), &pb.AnalysisRequest{
+	// Tangkap return value 'res'
+	res, err := client.TriggerAnalysis(context.Background(), &pb.AnalysisRequest{
 		SessionId:        sessionID,
 		UserInput:        input,
 		Title:            title,
 		PrimaryDiagnosis: diagnosis,
 		ExpectedWorkup:   workup,
-		AnamnesisItems:   anamnesis, // Field ini sesuai dengan hasil generate pb
+		AnamnesisItems:   anamnesis,
 	})
-	return err
+
+	if err != nil {
+		return nil, err
+	}
+
+	return res, nil // Kembalikan respon dari AI
 }
