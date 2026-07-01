@@ -6,6 +6,8 @@ import (
 	"clinithink/internal/response"
 
 	"github.com/gofiber/fiber/v2"
+
+	"clinithink/internal/grpc"
 )
 
 func (h *Handler) ListCases(c *fiber.Ctx) error {
@@ -91,25 +93,25 @@ func (h *Handler) GetCase(c *fiber.Ctx) error {
 	caseID := c.Params("id")
 
 	type illnessScript struct {
-		PrimaryDiagnosis     string          `json:"primary_diagnosis"`
-		EnablingConditions   []string        `json:"enabling_conditions"`
-		FaultPathophysiology string          `json:"fault_pathophysiology"`
-		Consequences         fiber.Map       `json:"consequences"`
+		PrimaryDiagnosis     string    `json:"primary_diagnosis"`
+		EnablingConditions   []string  `json:"enabling_conditions"`
+		FaultPathophysiology string    `json:"fault_pathophysiology"`
+		Consequences         fiber.Map `json:"consequences"`
 	}
 
 	type caseDetail struct {
-		ID                     string         `json:"id"`
-		CaseID                 string         `json:"case_id"`
-		Title                  string         `json:"title"`
-		Difficulty             string         `json:"difficulty"`
-		StationDurationMinutes int            `json:"station_duration_minutes"`
-		PatientPresentation    fiber.Map      `json:"patient_presentation"`
-		SystemCode             string         `json:"system_code"`
-		SystemName             string         `json:"system_name"`
-		IllnessScript          illnessScript  `json:"illness_script"`
-		DifferentialDiagnoses  []fiber.Map    `json:"differential_diagnoses"`
-		OSCEChecklist          fiber.Map      `json:"osce_checklist"`
-		SCTItems               []fiber.Map    `json:"sct_items"`
+		ID                     string        `json:"id"`
+		CaseID                 string        `json:"case_id"`
+		Title                  string        `json:"title"`
+		Difficulty             string        `json:"difficulty"`
+		StationDurationMinutes int           `json:"station_duration_minutes"`
+		PatientPresentation    fiber.Map     `json:"patient_presentation"`
+		SystemCode             string        `json:"system_code"`
+		SystemName             string        `json:"system_name"`
+		IllnessScript          illnessScript `json:"illness_script"`
+		DifferentialDiagnoses  []fiber.Map   `json:"differential_diagnoses"`
+		OSCEChecklist          fiber.Map     `json:"osce_checklist"`
+		SCTItems               []fiber.Map   `json:"sct_items"`
 	}
 
 	var detail caseDetail
@@ -225,6 +227,17 @@ func (h *Handler) GetCase(c *fiber.Ctx) error {
 	if err := sctRows.Err(); err != nil {
 		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
 	}
+
+	anamnesisItems := detail.OSCEChecklist["anamnesis_items"].([]string)
+	workupItems := detail.OSCEChecklist["expected_workup"].([]string)
+	go grpc.SendAnalysisTrigger(
+		caseID,
+		"CASE_LOADED",
+		detail.Title,
+		detail.IllnessScript.PrimaryDiagnosis,
+		workupItems,
+		anamnesisItems,
+	)
 
 	return response.OK(c, detail)
 }

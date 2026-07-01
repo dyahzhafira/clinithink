@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 
@@ -9,6 +10,12 @@ import (
 	ws "clinithink/internal/ws"
 
 	"github.com/gofiber/fiber/v2"
+
+	"fmt"
+	"os"
+
+	"github.com/livekit/protocol/livekit"
+	lksdk "github.com/livekit/server-sdk-go/v2"
 )
 
 func (h *Handler) CreateSession(c *fiber.Ctx) error {
@@ -32,6 +39,41 @@ func (h *Handler) CreateSession(c *fiber.Ctx) error {
 	).Scan(&sessionID)
 	if err != nil {
 		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
+	}
+
+	var caseCode string
+	err = h.db.QueryRow(c.Context(), `
+		SELECT case_id FROM cases WHERE id = $1`,
+		body.CaseID,
+	).Scan(&caseCode)
+
+	if err != nil {
+		return response.Error(c, fiber.StatusNotFound, "NOT_FOUND", "Kasus tidak ditemukan")
+	}
+
+	metadata := map[string]string{
+		"case_id": caseCode, // Contoh: "NEURO-001"
+	}
+
+	metadataBytes, _ := json.Marshal(metadata)
+
+	// 2. Gunakan lksdk.NewRoomServiceClient
+	roomClient := lksdk.NewRoomServiceClient(
+		os.Getenv("LIVEKIT_HOST"),
+		os.Getenv("LIVEKIT_API_KEY"),
+		os.Getenv("LIVEKIT_API_SECRET"),
+	)
+
+	// 3. Panggil CreateRoom
+	_, err = roomClient.CreateRoom(c.Context(), &livekit.CreateRoomRequest{
+		Name:     sessionID,
+		Metadata: string(metadataBytes),
+	})
+
+	if err != nil {
+		// TAMBAHKAN LOG INI
+		fmt.Printf("ERROR LIVEKIT: %v\n", err)
+		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Gagal membuat ruang")
 	}
 
 	return response.OK(c, fiber.Map{"id": sessionID, "status": "in_progress"})
@@ -116,21 +158,44 @@ func (h *Handler) GetSession(c *fiber.Ctx) error {
 		SubmittedAt *string `json:"submitted_at"`
 		CaseID      string  `json:"case_id"`
 		CaseTitle   string  `json:"case_title"`
+		DurationMin int     `json:"duration_minutes"`
+		SecondsLeft int     `json:"seconds_remaining"`
 	}
 
 	var detail sessionDetail
+	var startedAt time.Time
 	err := h.db.QueryRow(c.Context(), `
-		SELECT s.id, s.status, s.started_at::text, s.submitted_at::text,
-		       c.case_id, c.title
+		SELECT s.id, s.status, s.started_at, s.submitted_at::text,
+		       c.case_id, c.title, c.station_duration_minutes
 		FROM sessions s
 		JOIN cases c ON c.id = s.case_id
 		WHERE s.id = $1 AND s.student_id = $2`,
 		sessionID, studentID,
-	).Scan(&detail.ID, &detail.Status, &detail.StartedAt, &detail.SubmittedAt,
-		&detail.CaseID, &detail.CaseTitle)
+	).Scan(&detail.ID, &detail.Status, &startedAt, &detail.SubmittedAt,
+		&detail.CaseID, &detail.CaseTitle, &detail.DurationMin)
 	if err != nil {
 		return response.Error(c, fiber.StatusNotFound, "NOT_FOUND", "Sesi tidak ditemukan")
 	}
+
+	detail.StartedAt = startedAt.Format(time.RFC3339)
+
+	// Hitung seconds_remaining
+	secondsLeft := 0
+	if detail.Status == "in_progress" {
+		elapsed := time.Since(startedAt)
+		remaining := time.Duration(detail.DurationMin)*time.Minute - elapsed
+		if remaining > 0 {
+			secondsLeft = int(remaining.Seconds())
+		} else {
+			// Otomatis ubah status ke abandoned jika waktu sudah lewat saat diakses
+			h.db.Exec(c.Context(),
+				`UPDATE sessions SET status = 'abandoned', submitted_at = now() WHERE id = $1 AND status = 'in_progress'`,
+				sessionID,
+			)
+			detail.Status = "abandoned"
+		}
+	}
+	detail.SecondsLeft = secondsLeft
 
 	return response.OK(c, detail)
 }
@@ -313,9 +378,17 @@ func (h *Handler) LogEvent(c *fiber.Ctx) error {
 	}
 
 	validTypes := map[string]bool{
-		"symptom_mentioned": true, "hypothesis_proposed": true, "question_asked": true,
-		"differential_explored": true, "hypothesis_committed": true,
-		"new_info_received": true, "hypothesis_revised": true,
+		// Event yang dikirim oleh frontend (aktivitas mahasiswa)
+		"symptom_mentioned":     true,
+		"hypothesis_proposed":   true,
+		"question_asked":        true,
+		"differential_explored": true,
+		"hypothesis_committed":  true,
+		"new_info_received":     true,
+		"hypothesis_revised":    true,
+		// Event yang dikirim oleh backend (respons AI, untuk replay whiteboard)
+		"ai_action":             true,
+		"ai_response":           true,
 	}
 	if !validTypes[body.EventType] {
 		return response.Error(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "event_type tidak valid")
@@ -355,12 +428,93 @@ func (h *Handler) LogEvent(c *fiber.Ctx) error {
 		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
 	}
 
+	// Evaluasi bias secara real-time setelah event baru dicatat
+	go func(ctx context.Context, sessID string) {
+		rows, err := h.db.Query(ctx,
+			`SELECT event_type, sequence_number FROM session_events
+			 WHERE session_id = $1 ORDER BY sequence_number`, sessID)
+		if err != nil {
+			return
+		}
+		defer rows.Close()
+
+		var events []bias.Event
+		for rows.Next() {
+			var e bias.Event
+			if err := rows.Scan(&e.EventType, &e.SequenceNumber); err == nil {
+				events = append(events, e)
+			}
+		}
+
+		results := bias.Detect(events)
+		for _, r := range results {
+			var exists bool
+			h.db.QueryRow(ctx,
+				`SELECT EXISTS(SELECT 1 FROM bias_detections WHERE session_id = $1 AND bias_type = $2)`,
+				sessID, r.BiasType,
+			).Scan(&exists)
+
+			if !exists {
+				_, _ = h.db.Exec(ctx, `
+					INSERT INTO bias_detections (session_id, bias_type, detected_at_sequence, confidence_note)
+					VALUES ($1, $2, $3, $4)`,
+					sessID, r.BiasType, r.DetectedAtSequence, r.ConfidenceNote)
+			}
+		}
+	}(context.Background(), sessionID)
+
 	return response.OK(c, fiber.Map{
 		"id":              eventID,
 		"session_id":      sessionID,
 		"event_type":      body.EventType,
 		"sequence_number": seqNum,
 	})
+}
+
+// GetEvents mengambil riwayat event sesi untuk keperluan replay whiteboard.
+// Hanya student pemilik sesi yang dapat mengakses.
+func (h *Handler) GetEvents(c *fiber.Ctx) error {
+	studentID, ok := c.Locals("user_id").(string)
+	if !ok || studentID == "" {
+		return response.Error(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Token tidak valid")
+	}
+
+	sessionID := c.Params("id")
+
+	// Validasi kepemilikan sesi (Bug 12 fix)
+	var exists bool
+	if err := h.db.QueryRow(c.Context(),
+		`SELECT EXISTS(SELECT 1 FROM sessions WHERE id = $1 AND student_id = $2)`,
+		sessionID, studentID,
+	).Scan(&exists); err != nil || !exists {
+		return response.Error(c, fiber.StatusNotFound, "NOT_FOUND", "Sesi tidak ditemukan")
+	}
+
+	rows, err := h.db.Query(c.Context(),
+		`SELECT id, event_type, event_data, sequence_number 
+         FROM session_events WHERE session_id = $1 ORDER BY sequence_number ASC`,
+		sessionID)
+	if err != nil {
+		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Gagal mengambil data")
+	}
+	defer rows.Close()
+
+	type eventItem struct {
+		ID             string          `json:"id"`
+		EventType      string          `json:"event_type"`
+		EventData      json.RawMessage `json:"event_data"`
+		SequenceNumber int             `json:"sequence_number"`
+	}
+
+	events := []eventItem{}
+	for rows.Next() {
+		var e eventItem
+		if err := rows.Scan(&e.ID, &e.EventType, &e.EventData, &e.SequenceNumber); err == nil {
+			events = append(events, e)
+		}
+	}
+
+	return response.OK(c, fiber.Map{"events": events})
 }
 
 // SubmitAnalysis
@@ -468,4 +622,3 @@ func (h *Handler) GetAnalysis(c *fiber.Ctx) error {
 		"bias_detections":      biasDetections,
 	})
 }
-
