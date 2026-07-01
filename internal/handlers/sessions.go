@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 
@@ -426,6 +427,41 @@ func (h *Handler) LogEvent(c *fiber.Ctx) error {
 	).Scan(&eventID); err != nil {
 		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server")
 	}
+
+	// Evaluasi bias secara real-time setelah event baru dicatat
+	go func(ctx context.Context, sessID string) {
+		rows, err := h.db.Query(ctx,
+			`SELECT event_type, sequence_number FROM session_events
+			 WHERE session_id = $1 ORDER BY sequence_number`, sessID)
+		if err != nil {
+			return
+		}
+		defer rows.Close()
+
+		var events []bias.Event
+		for rows.Next() {
+			var e bias.Event
+			if err := rows.Scan(&e.EventType, &e.SequenceNumber); err == nil {
+				events = append(events, e)
+			}
+		}
+
+		results := bias.Detect(events)
+		for _, r := range results {
+			var exists bool
+			h.db.QueryRow(ctx,
+				`SELECT EXISTS(SELECT 1 FROM bias_detections WHERE session_id = $1 AND bias_type = $2)`,
+				sessID, r.BiasType,
+			).Scan(&exists)
+
+			if !exists {
+				_, _ = h.db.Exec(ctx, `
+					INSERT INTO bias_detections (session_id, bias_type, detected_at_sequence, confidence_note)
+					VALUES ($1, $2, $3, $4)`,
+					sessID, r.BiasType, r.DetectedAtSequence, r.ConfidenceNote)
+			}
+		}
+	}(context.Background(), sessionID)
 
 	return response.OK(c, fiber.Map{
 		"id":              eventID,

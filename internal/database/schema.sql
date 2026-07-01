@@ -154,7 +154,7 @@ CREATE TABLE IF NOT EXISTS  session_events (
     event_type VARCHAR(30) NOT NULL CHECK (event_type IN (
         'symptom_mentioned', 'hypothesis_proposed', 'question_asked',
         'differential_explored', 'hypothesis_committed', 'new_info_received',
-        'hypothesis_revised'
+        'hypothesis_revised', 'ai_action', 'ai_response'
     )),
     event_data JSONB, -- detail spesifik event (entitas yang disebut, dll)
     sequence_number INT NOT NULL, -- urutan event dalam sesi (utk analisis pola)
