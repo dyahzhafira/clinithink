@@ -157,21 +157,44 @@ func (h *Handler) GetSession(c *fiber.Ctx) error {
 		SubmittedAt *string `json:"submitted_at"`
 		CaseID      string  `json:"case_id"`
 		CaseTitle   string  `json:"case_title"`
+		DurationMin int     `json:"duration_minutes"`
+		SecondsLeft int     `json:"seconds_remaining"`
 	}
 
 	var detail sessionDetail
+	var startedAt time.Time
 	err := h.db.QueryRow(c.Context(), `
-		SELECT s.id, s.status, s.started_at::text, s.submitted_at::text,
-		       c.case_id, c.title
+		SELECT s.id, s.status, s.started_at, s.submitted_at::text,
+		       c.case_id, c.title, c.station_duration_minutes
 		FROM sessions s
 		JOIN cases c ON c.id = s.case_id
 		WHERE s.id = $1 AND s.student_id = $2`,
 		sessionID, studentID,
-	).Scan(&detail.ID, &detail.Status, &detail.StartedAt, &detail.SubmittedAt,
-		&detail.CaseID, &detail.CaseTitle)
+	).Scan(&detail.ID, &detail.Status, &startedAt, &detail.SubmittedAt,
+		&detail.CaseID, &detail.CaseTitle, &detail.DurationMin)
 	if err != nil {
 		return response.Error(c, fiber.StatusNotFound, "NOT_FOUND", "Sesi tidak ditemukan")
 	}
+
+	detail.StartedAt = startedAt.Format(time.RFC3339)
+
+	// Hitung seconds_remaining
+	secondsLeft := 0
+	if detail.Status == "in_progress" {
+		elapsed := time.Since(startedAt)
+		remaining := time.Duration(detail.DurationMin)*time.Minute - elapsed
+		if remaining > 0 {
+			secondsLeft = int(remaining.Seconds())
+		} else {
+			// Otomatis ubah status ke abandoned jika waktu sudah lewat saat diakses
+			h.db.Exec(c.Context(),
+				`UPDATE sessions SET status = 'abandoned', submitted_at = now() WHERE id = $1 AND status = 'in_progress'`,
+				sessionID,
+			)
+			detail.Status = "abandoned"
+		}
+	}
+	detail.SecondsLeft = secondsLeft
 
 	return response.OK(c, detail)
 }

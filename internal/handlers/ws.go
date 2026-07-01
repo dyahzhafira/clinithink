@@ -73,7 +73,7 @@ func (h *Handler) HandleSession(c *gws.Conn) {
 	defer h.hub.Unregister(sessionID)
 
 	// StartTimer sekarang menggunakan h.roomClient (LiveKit) untuk mengirim timer_tick
-	go ws.StartTimer(ctx, sessionID, int(remaining.Seconds()), h.roomClient)
+	go ws.StartTimer(ctx, sessionID, int(remaining.Seconds()), h.roomClient, h.db)
 
 	// Read loop — tetap terbuka selama koneksi aktif
 	for {
